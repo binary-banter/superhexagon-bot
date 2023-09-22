@@ -192,6 +192,23 @@ impl VectorizedGameState {
     }
 }
 
+fn index_to_angle(i: usize, modulo: usize) -> usize{
+    let angle = 360 / modulo;
+    (angle/2 + angle * i)
+}
+
+fn angle_to_index(angle: usize, modulo: usize) -> usize{
+    angle / (360 / modulo)
+}
+
+fn to_array<const N: usize, T: Default + Clone + Copy>(mut i: impl Iterator<Item=T>) -> [T; N] {
+    let mut arr = [T::default(); N];
+    for (i, v) in i.enumerate(){
+        arr[i] = v;
+    }
+    arr
+}
+
 fn main() {
     let mut system = get_system();
 
@@ -282,4 +299,29 @@ fn get_angle(module: &Module) -> usize {
 
 fn get_modulo(module: &Module) -> usize {
     unsafe { module.read_deref::<u32>(0x15E8EC, [0x0198]).unwrap() as usize }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::VectorizedGameState;
+
+    #[test]
+    fn test() {
+        const F: bool = false;
+        const T: bool = true;
+        let gs: VectorizedGameState = VectorizedGameState {
+            rows: vec![
+                (0000, [F,F,F,F,F,F]),
+                (1400, [F,T,T,T,T,T]),
+                (1600, [F,F,F,F,F,F]),
+                (2600, [T,F,T,T,F,T]),
+                (2800, [F,F,F,F,F,F]),
+                (3200, [F,T,T,F,T,T]),
+                (3400, [F,F,F,F,F,F]),
+            ],
+        };
+        let angle = 153;
+        let res = gs.solve(angle, 6);
+        assert!(res.is_some());
+    }
 }
