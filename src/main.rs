@@ -2,7 +2,7 @@ use enigo::{Enigo, Key, KeyboardControllable};
 use itertools::{izip, Itertools};
 use pointer_deref::main::{get_process, Module};
 use pointer_deref::main::{get_system, OpenedProcess};
-use std::cmp::Ordering;
+use std::cmp::{min, Ordering};
 use std::time::{Duration, Instant};
 use sysinfo::{ProcessExt};
 
@@ -135,7 +135,7 @@ impl VectorizedGameState {
     fn display(&self) {
         for row in &self.rows {
             println!(
-                "{} - {:?}",
+                "{:04} - {:?}",
                 row.0,
                 row.1.iter().cloned().map(u8::from).format("")
             );
@@ -143,52 +143,52 @@ impl VectorizedGameState {
     }
 
     fn solve(&self, angle: usize, modulo: usize) -> Option<(usize, bool)> {
-        if self.rows.len() < 2 {
-            return None;
-        }
+        let mut costs = [0usize; 6];
+        let mut side = [None; 6];
+        let mut last_d = self.rows.last().unwrap().0;
 
-        let (t0, row0) = self.rows[0];
-        assert_eq!(t0, 0);
-        let (t1, row1) = self.rows[1];
+        for &(d, row) in self.rows.iter().rev().skip(1) {
+            let delta_d = last_d - d;
+            let reachable_diff = delta_d * 6 / 1500;
 
-        let cur_i = angle / (360 / modulo);
+            let mut new_costs = [0; 6];
+            for i in 0..6 {
+                if row[i] {
+                    new_costs[i] = 1000000000;
+                    continue;
+                };
+                new_costs[i] = costs[i];
+                side[i] = None;
 
-        let set = match modulo {
-            6 => vec![30, 90, 150, 210, 270, 330],
-            5 => vec![36, 108, 180, 252, 324],
-            4 => vec![45, 135, 225, 315],
-            _ => panic!("wut"),
-        }.into_iter().enumerate(); //.sorted_by_key(|(_, x)|mod_diff(angle, *x as usize, 360));
+                for j in 1..min(6, reachable_diff+1) {
+                    let j_abs = (i + j) % 6;
+                    if row[j_abs] { break; }
+                    let new_cost = costs[j_abs] + 1;
 
-        for (test_i, test_angle) in set {
-            let reachable_diff = t1 * 360 / 1500;
+                    if new_cost < new_costs[i] {
+                        new_costs[i] = new_cost;
+                        side[i] = Some((true, j_abs));
+                    }
+                }
 
-            if row1[test_i] {
-                continue;
-            }
+                for j in 1..min(6, reachable_diff+1) {
+                    let j_abs = (i + 6 - j) % 6;
+                    if row[j_abs] { break; }
+                    let new_cost = costs[j_abs] + 1;
 
-            // If we go via increasing, can we make it?
-            if mod_sub(test_angle, angle, 360) < reachable_diff {
-                if (0..=mod_sub(test_i, cur_i, modulo))
-                    .map(|a| (a + cur_i) % modulo)
-                    .all(|i| !row0[i])
-                {
-                    return Some((test_angle, true));
+                    if new_cost < new_costs[i] {
+                        new_costs[i] = new_cost;
+                        side[i] = Some((false, j_abs));
+                    }
                 }
             }
+            // println!("{d} {reachable_diff} {row:?} - {new_costs:?}");
 
-            // If we go via decreasing, can we make it?
-            if mod_sub(angle, test_angle, 360) < reachable_diff {
-                if (0..=mod_sub(cur_i, test_i, modulo))
-                    .map(|a| (a + test_i) % modulo)
-                    .all(|i| !row0[i])
-                {
-                    return Some((test_angle, false));
-                }
-            }
+            costs = new_costs;
+            last_d = d;
         }
 
-        None
+        side[angle_to_index(angle, 6)].map(|(s, t)| (index_to_angle(t, 6), s))
     }
 }
 
