@@ -1,0 +1,12 @@
+[package]
+name = "super_hexagon"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+pointer_deref = {path = "../pointer_deref" }
+sysinfo = "0.29.8"
+itertools = "0.11.0"
+enigo = "0.1.2"
