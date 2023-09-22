@@ -40,10 +40,6 @@ fn handle_action(
     angle: usize,
     (target_angle, is_dir_up): (usize, bool),
 ) {
-    if mod_diff(angle, target_angle, 360) < 10 {
-        return;
-    }
-
     if is_dir_up {
         enigo.key_down(Key::LeftArrow);
         loop {
@@ -99,7 +95,7 @@ impl VectorizedGameState {
             .walls
             .iter()
             .filter(|wall| {
-                !(wall.depth == 0 || wall.distance > 3500 || wall.side >= 6 || wall.depth > 15000)
+                !(wall.depth == 0  || wall.side >= 6 || wall.depth > 15000)
             })
             .map(|wall| {
                 [
@@ -142,16 +138,28 @@ impl VectorizedGameState {
         }
     }
 
-    fn solve(&self, angle: usize, modulo: usize) -> Option<(usize, bool)> {
-        let mut costs = [0usize; 6];
-        let mut side = [None; 6];
+    fn solve(&self, angle: usize, original_modulo: usize) -> Option<(usize, bool)> {
+        const SPLIT_FACTOR: usize = 12;
+        let modulo = original_modulo * SPLIT_FACTOR;
+
+        let mut costs = [0usize; 6 * SPLIT_FACTOR];
+        let mut side = [None; 6 * SPLIT_FACTOR];
         let mut last_d = self.rows.last().unwrap().0;
 
         for &(d, row) in self.rows.iter().rev().skip(1) {
+            if row[..original_modulo].iter().all(|b| *b) {
+                costs = [0usize; 6 * SPLIT_FACTOR];
+                side = [None; 6 * SPLIT_FACTOR];
+                last_d = d;
+                continue;
+            }
+
+            let row: [bool; 6 * SPLIT_FACTOR] = to_array(row.iter().map(|&x| [x; SPLIT_FACTOR].into_iter()).flatten());
+
             let delta_d = last_d - d;
             let reachable_diff = delta_d * modulo / 1500;
 
-            let mut new_costs = [0; 6];
+            let mut new_costs = [0; 6 * SPLIT_FACTOR];
             for i in 0..modulo {
                 if row[i] {
                     new_costs[i] = 1000000000;
@@ -167,7 +175,7 @@ impl VectorizedGameState {
                     }
                     let new_cost = costs[j_abs] + 1;
 
-                    print!("{}", j_abs);
+                    // print!("{}", j_abs);
 
                     if new_cost < new_costs[i] {
                         new_costs[i] = new_cost;
@@ -175,7 +183,7 @@ impl VectorizedGameState {
                     }
                 }
 
-                println!();
+                // println!();
 
                 for j in 1..min(modulo, reachable_diff + 1) {
                     let j_abs = (i + modulo - j) % modulo;
@@ -184,7 +192,7 @@ impl VectorizedGameState {
                     }
                     let new_cost = costs[j_abs] + 1;
 
-                    print!("{}", j_abs);
+                    // print!("{}", j_abs);
 
                     if new_cost < new_costs[i] {
                         new_costs[i] = new_cost;
@@ -192,10 +200,10 @@ impl VectorizedGameState {
                     }
                 }
 
-                println!();
-                println!();
+                // println!();
+                // println!();
             }
-            println!("{d} {reachable_diff} {row:?} - {new_costs:?}");
+            // println!("{d} {reachable_diff} {row:?} - {new_costs:?}");
 
             costs = new_costs;
             last_d = d;
@@ -357,6 +365,60 @@ mod tests {
         };
         let angle = 152;
         let res = gs.solve(angle, 6);
+        assert!(res.is_some());
+    }
+
+    #[test]
+    fn test3() {
+        let gs: VectorizedGameState = VectorizedGameState {
+            rows: vec![
+                (0000, [F, F, F, F, F, F]),
+                (1404, [T, T, T, T, F, T]),
+                (1604, [T, T, T, T, F, F]),
+                (1804, [F, T, T, T, F, F]),
+                (2004, [F, F, T, T, F, F]),
+                (2204, [F, F, F, T, T, F]),
+                (2404, [F, F, F, F, T, T]),
+                (2504, [F, F, F, F, F, T]),
+                (2604, [T, F, F, F, F, T]),
+                (2704, [T, F, F, F, F, F]),
+                (2804, [T, T, F, F, F, F]),
+                (2904, [F, T, F, F, F, F]),
+                (3004, [F, T, T, F, F, F]),
+                (3104, [F, F, T, F, F, F]),
+                (3204, [F, F, T, T, F, F]),
+                (3304, [F, F, F, T, F, F]),
+                (3404, [F, F, F, T, T, F]),
+                (3504, [F, F, F, F, T, F]),
+                (3704, [F, F, F, F, F, F]),
+            ],
+        };
+        let angle = 21;
+        let res = gs.solve(angle, 6);
+        assert!(res.is_some());
+    }
+
+    #[test]
+    fn test4() {
+        let gs: VectorizedGameState = VectorizedGameState {
+            rows: vec![
+                (0000, [F,F,F,F,F,F]),
+                (0600, [T,T,F,T,T,F]),
+                (0800, [F,F,F,F,F,F]),
+                (1600, [T,T,T,T,F,F]),
+                (1800, [F,F,F,F,F,F]),
+                (2600, [T,T,F,T,T,F]),
+                (2800, [F,F,F,F,F,F]),
+                // (4600, [T,T,T,T,T,F]),
+                // (4800, [F,F,F,F,F,F]),
+                // (5000, [T,T,T,T,T,F]),
+                // (5200, [F,F,F,F,F,F]),
+                // (5400, [T,T,T,T,T,F]),
+                // (5600, [F,F,F,F,F,F]),
+            ],
+        };
+        let angle = 202;
+        let res = gs.solve(angle, 5);
         assert!(res.is_some());
     }
 }
