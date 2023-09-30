@@ -3,6 +3,8 @@ use itertools::{izip, Itertools};
 use pointer_deref::main::{get_process, Module};
 use pointer_deref::main::{get_system, OpenedProcess};
 use std::cmp::{min, Ordering};
+use std::env::split_paths;
+use std::ops::BitOr;
 use std::time::{Duration, Instant};
 use sysinfo::ProcessExt;
 
@@ -95,19 +97,19 @@ impl VectorizedGameState {
             .walls
             .iter()
             .filter(|wall| {
-                !(wall.depth == 0  || wall.side >= 6 || wall.depth > 15000)
+                !(wall.depth == 0  || wall.side >= 6 || wall.depth > 15000 || wall.distance + wall.depth < 150)
             })
             .map(|wall| {
                 [
                     WallEvent {
                         start: true,
                         side: wall.side as usize,
-                        point: wall.distance as usize,
+                        point: (wall.distance as usize).saturating_sub(150),
                     },
                     WallEvent {
                         start: false,
                         side: wall.side as usize,
-                        point: wall.distance as usize + wall.depth as usize,
+                        point: (wall.distance as usize + wall.depth as usize).saturating_sub(150),
                     },
                 ]
                 .into_iter()
@@ -138,88 +140,106 @@ impl VectorizedGameState {
         }
     }
 
-    fn solve(&self, angle: usize, original_modulo: usize) -> Option<(usize, bool)> {
-        const SPLIT_FACTOR: usize = 12;
-        let modulo = original_modulo * SPLIT_FACTOR;
+    fn solve(&self, angle: usize, modulo: usize) -> Option<(usize, bool)> {
+        const SPLIT_FACTOR: usize = 15;
 
-        let mut costs = [0usize; 6 * SPLIT_FACTOR];
         let mut side = [None; 6 * SPLIT_FACTOR];
-        let mut last_d = self.rows.last().unwrap().0;
+        let mut costs = vec![[usize::MAX; 6 * SPLIT_FACTOR]; self.rows.len()];
+        *costs.last_mut().unwrap() = [0; 6 * SPLIT_FACTOR];
 
-        for &(d, row) in self.rows.iter().rev().skip(1) {
-            if row[..original_modulo].iter().all(|b| *b) {
-                costs = [0usize; 6 * SPLIT_FACTOR];
-                side = [None; 6 * SPLIT_FACTOR];
-                last_d = d;
+        let modulo = modulo * SPLIT_FACTOR;
+
+        for (i, (d, row)) in self.rows.iter().enumerate().rev().skip(1) {
+            let row: [bool; 6 * SPLIT_FACTOR] = to_array(row.iter().map(|&x| [x; SPLIT_FACTOR].into_iter()).flatten());
+
+            let mut unreachable = row;
+            side = [None; 6 * SPLIT_FACTOR];
+
+            if row[..modulo].iter().all(|x| *x) {
+                costs[i] = [0; 6 * SPLIT_FACTOR];
                 continue;
             }
 
-            let row: [bool; 6 * SPLIT_FACTOR] = to_array(row.iter().map(|&x| [x; SPLIT_FACTOR].into_iter()).flatten());
+            for (j, (next_d, next_row)) in self.rows.iter().enumerate().skip(i + 1) {
+                let next_row: [bool; 6 * SPLIT_FACTOR] = to_array(next_row.iter().map(|&x| [x; SPLIT_FACTOR].into_iter()).flatten());
 
-            let delta_d = last_d - d;
-            let reachable_diff = delta_d * modulo / 1500;
+                // no more places are reachable
+                if unreachable[..modulo].iter().all(|x| *x) {
+                    break;
+                }
 
-            let mut new_costs = [0; 6 * SPLIT_FACTOR];
-            for i in 0..modulo {
-                if row[i] {
-                    new_costs[i] = 1000000000;
-                    continue;
-                };
-                new_costs[i] = costs[i];
-                side[i] = None;
+                // check if we can reach certain angles
+                let reachable_diff = (next_d - d) * modulo / 1500;
 
-                for j in 1..min(modulo, reachable_diff + 1) {
-                    let j_abs = (i + j) % modulo;
-                    if row[j_abs] {
-                        break;
+                // For each cell in the current row
+                for k in 0..modulo {
+                    if unreachable[k] {
+                        continue;
                     }
-                    let new_cost = costs[j_abs] + 1;
 
-                    // print!("{}", j_abs);
+                    // Allow moving straight
+                    costs[i][k] = min(costs[i][k], costs[j][k]);
 
-                    if new_cost < new_costs[i] {
-                        new_costs[i] = new_cost;
-                        side[i] = Some((true, j_abs));
+                    // Move in positive dir
+                    for l in 1..min(modulo, reachable_diff + 1) {
+                        // Calculate absolute l
+                        let l_abs = (k + l) % modulo;
+
+                        // If we can't rotate to here, break (means we also can't rotate further)
+                        if unreachable[l_abs] {
+                            break;
+                        }
+
+                        let new_cost = costs[j][l_abs].saturating_add(1);
+
+                        if new_cost < costs[i][k] {
+                            costs[i][k] = new_cost;
+                            side[k] = Some((true, l_abs));
+                        }
+                    }
+
+                    // Move in negative dir
+                    for l in 1..min(modulo, reachable_diff + 1) {
+                        let l_abs = (k + modulo - l) % modulo;
+
+                        if unreachable[l_abs] {
+                            break;
+                        }
+
+                        let new_cost = costs[j][l_abs].saturating_add(1);
+
+                        if new_cost < costs[i][k] {
+                            costs[i][k] = new_cost;
+                            side[k] = Some((false, l_abs));
+                        }
                     }
                 }
 
-                // println!();
-
-                for j in 1..min(modulo, reachable_diff + 1) {
-                    let j_abs = (i + modulo - j) % modulo;
-                    if row[j_abs] {
-                        break;
-                    }
-                    let new_cost = costs[j_abs] + 1;
-
-                    // print!("{}", j_abs);
-
-                    if new_cost < new_costs[i] {
-                        new_costs[i] = new_cost;
-                        side[i] = Some((false, j_abs));
-                    }
-                }
-
-                // println!();
-                // println!();
+                // determine next `unreachable`
+                unreachable = to_array(unreachable.iter().zip(next_row.iter()).map(|(x, y)| *x || *y));
             }
-            // println!("{d} {reachable_diff} {row:?} - {new_costs:?}");
-
-            costs = new_costs;
-            last_d = d;
         }
+
+        // for costs in costs {
+        //     println!("{:?}", costs.map(|c| (c == usize::MAX) as usize));
+        // }
+        //
+        // println!("{}", modulo);
+        // println!("{:?}", side);
+        // println!("{:?}", angle_to_index(angle, modulo));
+        // println!("{:?}", side[angle_to_index(angle, modulo)]);
+        // println!("{}", index_to_angle(side[angle_to_index(angle, modulo)].0, modulo))
 
         side[angle_to_index(angle, modulo)].map(|(s, t)| (index_to_angle(t, modulo), s))
     }
 }
 
 fn index_to_angle(i: usize, modulo: usize) -> usize {
-    let angle = 360 / modulo;
-    (angle / 2 + angle * i)
+    (360 / modulo / 2 + i * 360 / modulo)
 }
 
 fn angle_to_index(angle: usize, modulo: usize) -> usize {
-    angle / (360 / modulo)
+    modulo * angle / 360
 }
 
 fn to_array<const N: usize, T: Default + Clone + Copy>(mut i: impl Iterator<Item = T>) -> [T; N] {
@@ -271,6 +291,8 @@ fn main() {
             last_target_angle = target_angle;
             vectorized.display();
             println!("{} -> {:?}", angle, target_angle);
+            println!("{modulo}");
+            // println!("{:?}", &game_state.walls);
             println!();
         }
 
@@ -372,28 +394,35 @@ mod tests {
     fn test3() {
         let gs: VectorizedGameState = VectorizedGameState {
             rows: vec![
-                (0000, [F, F, F, F, F, F]),
-                (1404, [T, T, T, T, F, T]),
-                (1604, [T, T, T, T, F, F]),
-                (1804, [F, T, T, T, F, F]),
-                (2004, [F, F, T, T, F, F]),
-                (2204, [F, F, F, T, T, F]),
-                (2404, [F, F, F, F, T, T]),
-                (2504, [F, F, F, F, F, T]),
-                (2604, [T, F, F, F, F, T]),
-                (2704, [T, F, F, F, F, F]),
-                (2804, [T, T, F, F, F, F]),
-                (2904, [F, T, F, F, F, F]),
-                (3004, [F, T, T, F, F, F]),
-                (3104, [F, F, T, F, F, F]),
-                (3204, [F, F, T, T, F, F]),
-                (3304, [F, F, F, T, F, F]),
-                (3404, [F, F, F, T, T, F]),
-                (3504, [F, F, F, F, T, F]),
-                (3704, [F, F, F, F, F, F]),
+                (0000, [F,F,F,F,F,F]),
+                (2050, [F,T,T,T,T,T]),
+                (2250, [F,F,T,T,T,T]),
+                (2450, [F,F,F,T,T,T]),
+                (2650, [F,F,F,F,T,T]),
+                (2850, [T,F,F,F,F,T]),
+                (3050, [T,T,F,F,F,F]),
+                (3150, [F,T,F,F,F,F]),
+                (3250, [F,T,T,F,F,F]),
+                (3350, [F,F,T,F,F,F]),
+                (3450, [F,F,T,T,F,F]),
+                (3550, [F,F,F,T,F,F]),
+                (3650, [F,F,F,T,T,F]),
+                (3750, [F,F,F,F,T,F]),
+                (3850, [F,F,F,F,T,T]),
+                (3950, [F,F,F,F,F,T]),
+                (4050, [T,F,F,F,F,T]),
+
+                (4150, [T,F,F,F,F,F]),
+                (4225, [T,T,F,F,F,F]),
+                (4350, [F,T,F,F,F,F]),
+                (4425, [F,T,T,F,F,F]),
+                (4625, [F,T,T,T,F,F]),
+                (4825, [F,T,T,T,T,F]),
+                (5025, [F,T,T,T,T,T]),
+                (5325, [F,F,F,F,F,F]),
             ],
         };
-        let angle = 21;
+        let angle = 347;
         let res = gs.solve(angle, 6);
         assert!(res.is_some());
     }
@@ -403,22 +432,75 @@ mod tests {
         let gs: VectorizedGameState = VectorizedGameState {
             rows: vec![
                 (0000, [F,F,F,F,F,F]),
-                (0600, [T,T,F,T,T,F]),
-                (0800, [F,F,F,F,F,F]),
-                (1600, [T,T,T,T,F,F]),
-                (1800, [F,F,F,F,F,F]),
-                (2600, [T,T,F,T,T,F]),
-                (2800, [F,F,F,F,F,F]),
-                // (4600, [T,T,T,T,T,F]),
-                // (4800, [F,F,F,F,F,F]),
-                // (5000, [T,T,T,T,T,F]),
-                // (5200, [F,F,F,F,F,F]),
-                // (5400, [T,T,T,T,T,F]),
-                // (5600, [F,F,F,F,F,F]),
+                (0642, [T,F,T,T,T,F]),
+                (0842, [F,F,F,F,F,F])
             ],
         };
-        let angle = 202;
+        let angle = 308;
         let res = gs.solve(angle, 5);
         assert!(res.is_some());
     }
+
+    #[test]
+    fn test5() {
+        let gs: VectorizedGameState = VectorizedGameState {
+            rows: vec![
+                (0000, [F,F,F,F,F,F]),
+                (0546, [T,T,T,F,T,F]),
+                (0746, [F,F,F,F,F,F]),
+            ],
+        };
+        let angle = 184;
+        let res = gs.solve(angle, 5);
+        let Some((res, _)) = res else {
+            panic!()
+        };
+        assert!(res >= 210 && res <= 282)
+    }
 }
+
+// 0000 - 100000
+// 0050 - 110000
+// 0225 - 011000
+// 0350 - 001000
+// 0450 - 001100
+// 0550 - 000100
+// 0650 - 000110
+// 0750 - 000010
+// 0850 - 000011
+// 0950 - 000001
+// 1050 - 100001
+// 1150 - 100000
+// 1250 - 110000
+// 1350 - 010000
+// 1450 - 011000
+// 1550 - 001000
+// 1650 - 001100
+// 1850 - 001110
+// 2050 - 001111
+// 2250 - 101111
+// 2550 - 000000
+// 251 -> Some((326, true))
+// 6
+//
+// 0000 - 111000
+// 0050 - 101000
+// 0175 - 101100
+// 0275 - 100100
+// 0375 - 100110
+// 0475 - 100010
+// 0575 - 100011
+// 0675 - 100001
+// 0775 - 100001
+// 0875 - 100000
+// 0975 - 110000
+// 1075 - 010000
+// 1175 - 011000
+// 1275 - 001000
+// 1375 - 001100
+// 1575 - 001110
+// 1775 - 001111
+// 1975 - 101111
+// 2275 - 000000
+// 328 -> None
+// 6
