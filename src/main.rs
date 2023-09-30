@@ -180,6 +180,8 @@ impl VectorizedGameState {
                     // Allow moving straight
                     costs[i][k] = min(costs[i][k], costs[j][k]);
 
+                    let mut reachable_moves = vec![];
+
                     // Move in positive dir
                     for l in 1..min(modulo, reachable_diff + 1) {
                         // Calculate absolute l
@@ -194,7 +196,11 @@ impl VectorizedGameState {
 
                         if new_cost < costs[i][k] {
                             costs[i][k] = new_cost;
-                            side[k] = Some((true, l_abs));
+                            // side[k] = Some((true, l_abs));
+                            reachable_moves.clear();
+                            reachable_moves.push(((true, l_abs), l));
+                        } else if new_cost == costs[i][k] {
+                            reachable_moves.push(((true, l_abs), l));
                         }
                     }
 
@@ -210,8 +216,16 @@ impl VectorizedGameState {
 
                         if new_cost < costs[i][k] {
                             costs[i][k] = new_cost;
-                            side[k] = Some((false, l_abs));
+                            // side[k] = Some((false, l_abs));
+                            reachable_moves.clear();
+                            reachable_moves.push(((false, l_abs), l));
+                        } else if new_cost == costs[i][k] {
+                            reachable_moves.push(((false, l_abs), l));
                         }
+                    }
+
+                    if let Some((mv, _)) = reachable_moves.into_iter().min_by_key(|&(_, d)| d) {
+                        side[k] = Some(mv);
                     }
                 }
 
